@@ -1,0 +1,62 @@
+name: Проверка и сборка
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Линтер (ruff)
+        run: ruff check .
+
+      - name: Проверка типов (pyright)
+        run: npx --yes pyright@1.1.414
+
+      - name: Тесты (включая живые тесты Windows API и разбор PowerShell-скриптов)
+        run: python -m pytest -v
+
+      - name: Сборка SysPulse.exe
+        run: pyinstaller --noconfirm --clean SysPulse.spec
+
+      - name: Проверка запуска собранного exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\SysPulse.exe -PassThru
+          Start-Sleep -Seconds 12
+          if ($p.HasExited) { Write-Error "SysPulse.exe завершился с кодом $($p.ExitCode)"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+          Write-Output "exe запускается и работает"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SysPulse-windows
+          path: dist/SysPulse.exe
+
+      - name: Релиз (для тегов v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/SysPulse.exe
